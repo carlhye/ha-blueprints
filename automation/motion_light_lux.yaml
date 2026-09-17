@@ -1,0 +1,112 @@
+blueprint:
+  name: Motion light with lux gate
+  author: IQ Connect
+  description: >-
+    Turns a light on when motion is detected, but only if the room is darker
+    than the chosen threshold. Turns it off again after a set period with no
+    motion.
+
+    The lux threshold gates turn-on ONLY. Turn-off always happens after the
+    empty timeout, regardless of light level, so the lamp's own output can
+    never switch itself off.
+  domain: automation
+  source_url: https://github.com/carlhye/ha-blueprints/blob/main/automation/motion_light_lux.yaml
+  input:
+    occupancy_sensor:
+      name: Motion sensor
+      description: Binary sensor that goes "on" when motion or occupancy is detected.
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class: occupancy
+            - domain: binary_sensor
+              device_class: motion
+
+    target_light:
+      name: Light
+      description: The light or light group to control.
+      selector:
+        target:
+          entity:
+            - domain: light
+
+    illuminance_sensor:
+      name: Light sensor (optional)
+      description: >-
+        Lux sensor that decides whether it is dark enough to turn on. Leave
+        empty if the room has none, and the light will turn on for any motion.
+        An unavailable sensor is treated as dark, so the light keeps working.
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: illuminance
+
+    lux_threshold:
+      name: Lux threshold
+      description: The light only turns on if the sensor reads below this value.
+      default: 250
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 5
+          unit_of_measurement: lx
+          mode: slider
+
+    off_delay:
+      name: Turn off after
+      description: How long the room must stay empty before the light turns off.
+      default:
+        hours: 0
+        minutes: 2
+        seconds: 0
+      selector:
+        duration: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  lux_entity: !input illuminance_sensor
+  lux_max: !input lux_threshold
+
+triggers:
+  - trigger: state
+    entity_id: !input occupancy_sensor
+    from: "off"
+    to: "on"
+    id: motion
+  - trigger: state
+    entity_id: !input occupancy_sensor
+    from: "on"
+    to: "off"
+    for: !input off_delay
+    id: clear
+
+conditions: []
+
+actions:
+  - choose:
+      - alias: Motion and dark enough - turn on
+        conditions:
+          - condition: trigger
+            id: motion
+          - condition: template
+            value_template: >-
+              {% set e = lux_entity if lux_entity is string
+                         else (lux_entity | first if lux_entity | count > 0 else none) %}
+              {{ e is none or states(e) | float(0) < lux_max }}
+        sequence:
+          - action: light.turn_on
+            target: !input target_light
+
+      - alias: Empty for the set time - turn off
+        conditions:
+          - condition: trigger
+            id: clear
+        sequence:
+          - action: light.turn_off
+            target: !input target_light
